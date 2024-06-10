@@ -2,7 +2,7 @@
 
 /* ntnxhashlib.c - This file contains the code for the libntnxhashlib.a static
  * library. This basically contains wrapper functions that make the ioctl calls.
- * These wrapper functions will get called by the applications that links with
+ * These wrapper functions will get called by the applications that link with
  * it.
  */
 #include <assert.h>
@@ -40,8 +40,8 @@ char* ntnx_hash_compute(ntnx_hash_t *ctx, void *buf, size_t len)
     }
 
     void *hash_buf = malloc(len + 1);
-    memset(hash_buf, 0, len + 1);
     assert(hash_buf);
+    memset(hash_buf, 0, len + 1);
 
     struct ntnx_hash_compute context = {
         .buf = buf,
@@ -65,8 +65,12 @@ ntnx_hash_t *ntnx_hash_setup(void)
     ntnx_hash_t *new_ctx = (ntnx_hash_t *)malloc(sizeof(*new_ctx));
 
     if (new_ctx) {
-        int file_desc = open(DEVICE_FILE_NAME, 0);
-        if (file_desc < 0) {
+        int file_desc;
+        do {
+            file_desc = open(DEVICE_FILE_NAME, 0);
+        } while (file_desc == -1 && errno == EBUSY);
+
+        if (file_desc < 0 && errno != EBUSY) {
             printf("Can't open device file: %s errno = %d \n", DEVICE_FILE_NAME,
                 errno);
             goto out_exit;

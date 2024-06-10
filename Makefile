@@ -61,7 +61,7 @@ ntnxlib: $(NTNX_LIB_FULL)
 
 # Rules for the test
 $(TEST_BINARY): $(NTNX_LIB_FULL) $(TEST_BINARY).c $(DRIVER_OBJECTS).h
-	$(GCC) $@.c -L. -l$(NTNX_LIB) -o $@
+	$(GCC) -pthread $@.c -L. -l$(NTNX_LIB) -o $@
 
 test: $(TEST_BINARY)
 

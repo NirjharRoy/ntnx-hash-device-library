@@ -6,6 +6,7 @@
  * ioctl calls.
  */
 #include <asm/uaccess.h>
+#include <linux/atomic.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/fs.h>
@@ -22,28 +23,29 @@
 #define BUF_LEN 80
 #define API_VERSION SUPPORTED_API_VERSION
 
-/*
- * Is the device open right now? Used to prevent
- * concurent access into the same device
- */
-static int Device_Open = 0;
+static atomic_t num_open = ATOMIC_INIT(0);
 
-/*
- * The message the device will give when asked
- */
-
-struct mychar_device_data {
+struct ntnx_device_data {
     struct cdev cdev;
 };
 
 static int dev_major = 0;
-static struct class *mychardev_class = NULL;
-static struct mychar_device_data mychardev_data;
+static struct class *ntnxdev_class = NULL;
+static struct ntnx_device_data ntnxdev_data;
 
 
 
 /* MD5 related functions */
-double sin_arr[64] = { 0.841470984807897, 0.909297426825682, 0.141120008059867,
+
+/* The md5 algorithm implementation is taken from
+ * https://www.programmingalgorithms.com/algorithm/md5/
+ */
+
+/* sin() function isn't available in kernel mode. Since this algorithm requires
+ * a specific set of value of sin i.e, from abs(sin(1)) to abs(sin(64)), I am using
+ * a precomputed table of the required  abs(sin(1 + i)) values (where i = 0 to 63)
+ */
+double fabs_sin_arr[64] = { 0.841470984807897, 0.909297426825682, 0.141120008059867,
                        0.756802495307928, 0.958924274663138, 0.279415498198926,
                        0.656986598718789, 0.989358246623382, 0.412118485241757,
                        0.544021110889370, 0.999990206550703, 0.536572918000435,
@@ -99,7 +101,7 @@ unsigned *calctable(unsigned *k)
 	int i;
 	pwr = (double)( (long)1 << 32);
 	for (i = 0; i < 64; i++) {
-		s = sin_arr[i];
+		s = fabs_sin_arr[i];
 		k[i] = (unsigned)(s * pwr);
 	}
 	return k;
@@ -187,7 +189,6 @@ unsigned* Algorithms_Hash_MD5(const char *msg, int mlen)
 void GetMD5String(const char *msg, int mlen, char *hash) {
 
 	int j;
-	//int k;
 	unsigned *d = Algorithms_Hash_MD5(msg, mlen);
 	char s[8];
 	MD5union u;
@@ -207,37 +208,23 @@ static int get_api_version(void)
 	return API_VERSION;
 }
 
-/*
- * This is called whenever a  process attempts to open the device file
- */
 static int device_open(struct inode *inode, struct file *file)
 {
-#ifdef DEBUG
-	printk(KERN_INFO "device_open(%p)\n", file);
-#endif
-
 	/*
-	 * We don't want to talk to two processes at the same time
+	 * Only one process can open the device at a time
 	 */
-	if (Device_Open)
+	if (atomic_read(&num_open)) {
 		return -EBUSY;
+	}
 
-	Device_Open++;
+	atomic_inc(&num_open);
 	try_module_get(THIS_MODULE);
 	return SUCCESS;
 }
 
 static int device_release(struct inode *inode, struct file *file)
 {
-#ifdef DEBUG
-	printk(KERN_INFO "device_release(%p,%p)\n", inode, file);
-#endif
-
-	/*
-	 * We're now ready for our next caller
-	 */
-	Device_Open--;
-
+	atomic_dec(&num_open);
 	module_put(THIS_MODULE);
 	return SUCCESS;
 }
@@ -312,11 +299,11 @@ long device_ioctl(struct file *file,
 struct file_operations Fops = {
 	.unlocked_ioctl = device_ioctl,
 	.open = device_open,
-	.release = device_release,	/* a.k.a. close */
+	.release = device_release,
 
 };
 
-static int mychardev_uevent(struct device *dev, struct kobj_uevent_env *env)
+static int ntnxdev_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
     add_uevent_var(env, "DEVMODE=%#o", 0666);
     return 0;
@@ -324,26 +311,28 @@ static int mychardev_uevent(struct device *dev, struct kobj_uevent_env *env)
 
 int init_module()
 {
-
+    atomic_set(&num_open, 0);
     dev_major = MAJOR_NUM;
-    mychardev_class = class_create(THIS_MODULE, DEVICE_NAME);
-    mychardev_class->dev_uevent = mychardev_uevent;
+    ntnxdev_class = class_create(THIS_MODULE, DEVICE_NAME);
+    ntnxdev_class->dev_uevent = ntnxdev_uevent;
 
-	cdev_init(&mychardev_data.cdev, &Fops);
-	mychardev_data.cdev.owner = THIS_MODULE;
-	cdev_add(&mychardev_data.cdev, MKDEV(dev_major, 0), 1);
-	device_create(mychardev_class, NULL, MKDEV(dev_major, 0), NULL, DEVICE_NAME);
+	cdev_init(&ntnxdev_data.cdev, &Fops);
+	ntnxdev_data.cdev.owner = THIS_MODULE;
+	cdev_add(&ntnxdev_data.cdev, MKDEV(dev_major, 0), 1);
+	device_create(ntnxdev_class, NULL, MKDEV(dev_major, 0), NULL, DEVICE_NAME);
 
     return 0;
 }
 
 void cleanup_module()
 {
-    device_destroy(mychardev_class, MKDEV(MAJOR_NUM, 0));
-    class_unregister(mychardev_class);
-    class_destroy(mychardev_class);
+    device_destroy(ntnxdev_class, MKDEV(MAJOR_NUM, 0));
+    class_unregister(ntnxdev_class);
+    class_destroy(ntnxdev_class);
     unregister_chrdev_region(MKDEV(MAJOR_NUM, 0), MINORMASK);
 }
+
+/* Driver specific functions end */
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Nirjhar Roy <babuiroy02@gmail.com>");

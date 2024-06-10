@@ -38,9 +38,9 @@
 #define SUPPORTED_API_VERSION 1
 
 struct ntnx_hash_compute {
-    void *buf; // pointer to the area for hashing
-    size_t len; // length of area for checksumming
-    void *hash; // pointer to the area for the computed hash
+    void *buf; // buffer which is to be hashed
+    size_t len; // length of buf
+    void *hash; // this will store the 32 character md5 hash
 };
 
 typedef struct ntnx_hash {
